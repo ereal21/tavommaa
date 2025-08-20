@@ -1,6 +1,7 @@
 import datetime
 import os
 import shutil
+import datetime
 
 from aiogram import Dispatcher
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -41,6 +42,8 @@ from bot.database.methods import (
     create_promocode,
     delete_promocode,
     get_promocode,
+    get_all_promocodes,
+    update_promocode,
 )
 from bot.utils import generate_internal_name, display_name
 
@@ -48,8 +51,9 @@ from bot.utils import generate_internal_name, display_name
 from bot.utils.files import get_next_file_path
 from bot.database.models import Permission
 from bot.handlers.other import get_bot_user_ids
-from bot.keyboards import shop_management, goods_management, categories_management, back, item_management, \
-    question_buttons, promo_codes_management
+from bot.keyboards import (shop_management, goods_management, categories_management, back, item_management,
+                           question_buttons, promo_codes_management, promo_expiry_keyboard, promo_codes_list,
+                           promo_manage_actions)
 from bot.logger_mesh import logger
 from bot.misc import TgConfig
 
@@ -142,27 +146,59 @@ async def promo_code_receive_discount(message: Message):
     discount = int(message.text.strip())
     TgConfig.STATE[f'{user_id}_promo_discount'] = discount
     message_id = TgConfig.STATE.get(f'{user_id}_message_id')
-    TgConfig.STATE[user_id] = 'promo_create_expiry'
+    TgConfig.STATE[user_id] = 'promo_create_expiry_type'
     await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-    await bot.edit_message_text('Enter expiry date (YYYY-MM-DD) or 0 for none:',
+    await bot.edit_message_text('Choose expiry type:',
                                 chat_id=message.chat.id,
+                                message_id=message_id,
+                                reply_markup=promo_expiry_keyboard('promo_management'))
+
+
+async def promo_create_expiry_type_handler(call: CallbackQuery):
+    bot, user_id = await get_bot_user_ids(call)
+    if TgConfig.STATE.get(user_id) != 'promo_create_expiry_type':
+        return
+    unit = call.data[len('promo_expiry_'):]
+    message_id = TgConfig.STATE.get(f'{user_id}_message_id')
+    if unit == 'none':
+        code = TgConfig.STATE.get(f'{user_id}_promo_code')
+        discount = TgConfig.STATE.get(f'{user_id}_promo_discount')
+        create_promocode(code, discount, None)
+        TgConfig.STATE[user_id] = None
+        await bot.edit_message_text('✅ Promo code created',
+                                    chat_id=call.message.chat.id,
+                                    message_id=message_id,
+                                    reply_markup=back('promo_management'))
+        admin_info = await bot.get_chat(user_id)
+        logger.info(f"User {user_id} ({admin_info.first_name}) created promo code {code}")
+        return
+    TgConfig.STATE[f'{user_id}_promo_expiry_unit'] = unit
+    TgConfig.STATE[user_id] = 'promo_create_expiry_number'
+    await bot.edit_message_text(f'Enter number of {unit}:',
+                                chat_id=call.message.chat.id,
                                 message_id=message_id,
                                 reply_markup=back('promo_management'))
 
 
-async def promo_code_receive_expiry(message: Message):
+async def promo_code_receive_expiry_number(message: Message):
     bot, user_id = await get_bot_user_ids(message)
-    if TgConfig.STATE.get(user_id) != 'promo_create_expiry':
+    if TgConfig.STATE.get(user_id) != 'promo_create_expiry_number':
         return
-    expiry = message.text.strip()
+    number = int(message.text.strip())
+    unit = TgConfig.STATE.get(f'{user_id}_promo_expiry_unit')
     code = TgConfig.STATE.get(f'{user_id}_promo_code')
     discount = TgConfig.STATE.get(f'{user_id}_promo_discount')
     message_id = TgConfig.STATE.get(f'{user_id}_message_id')
     await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-    if expiry == '0':
+    if number <= 0:
         expiry = None
+    else:
+        days = {'days': number, 'weeks': number * 7, 'months': number * 30}[unit]
+        expiry_date = datetime.date.today() + datetime.timedelta(days=days)
+        expiry = expiry_date.strftime('%Y-%m-%d')
     create_promocode(code, discount, expiry)
     TgConfig.STATE[user_id] = None
+    TgConfig.STATE.pop(f'{user_id}_promo_expiry_unit', None)
     await bot.edit_message_text('✅ Promo code created',
                                 chat_id=message.chat.id,
                                 message_id=message_id,
@@ -173,33 +209,166 @@ async def promo_code_receive_expiry(message: Message):
 
 async def delete_promo_callback_handler(call: CallbackQuery):
     bot, user_id = await get_bot_user_ids(call)
-    TgConfig.STATE[user_id] = 'promo_delete'
-    TgConfig.STATE[f'{user_id}_message_id'] = call.message.message_id
-    await bot.edit_message_text('Enter promo code to delete:',
+    codes = [p.code for p in get_all_promocodes()]
+    if codes:
+        await bot.edit_message_text('Select promo code to delete:',
+                                    chat_id=call.message.chat.id,
+                                    message_id=call.message.message_id,
+                                    reply_markup=promo_codes_list(codes, 'delete_promo_code', 'promo_management'))
+    else:
+        await call.answer('No promo codes available', show_alert=True)
+
+
+async def promo_code_delete_callback_handler(call: CallbackQuery):
+    bot, user_id = await get_bot_user_ids(call)
+    code = call.data[len('delete_promo_code_'):]
+    delete_promocode(code)
+    admin_info = await bot.get_chat(user_id)
+    logger.info(f"User {user_id} ({admin_info.first_name}) deleted promo code {code}")
+    codes = [p.code for p in get_all_promocodes()]
+    if codes:
+        await bot.edit_message_text('Select promo code to delete:',
+                                    chat_id=call.message.chat.id,
+                                    message_id=call.message.message_id,
+                                    reply_markup=promo_codes_list(codes, 'delete_promo_code', 'promo_management'))
+    else:
+        await bot.edit_message_text('✅ Promo code deleted',
+                                    chat_id=call.message.chat.id,
+                                    message_id=call.message.message_id,
+                                    reply_markup=back('promo_management'))
+
+
+async def manage_promo_callback_handler(call: CallbackQuery):
+    bot, user_id = await get_bot_user_ids(call)
+    codes = [p.code for p in get_all_promocodes()]
+    if codes:
+        await bot.edit_message_text('Select promo code:',
+                                    chat_id=call.message.chat.id,
+                                    message_id=call.message.message_id,
+                                    reply_markup=promo_codes_list(codes, 'manage_promo_code', 'promo_management'))
+    else:
+        await call.answer('No promo codes available', show_alert=True)
+
+
+async def promo_manage_select_handler(call: CallbackQuery):
+    bot, user_id = await get_bot_user_ids(call)
+    code = call.data[len('manage_promo_code_'):]
+    await bot.edit_message_text(f'Promo code: {code}',
                                 chat_id=call.message.chat.id,
                                 message_id=call.message.message_id,
-                                reply_markup=back('promo_management'))
+                                reply_markup=promo_manage_actions(code))
 
 
-async def promo_code_delete_process(message: Message):
+async def promo_manage_discount_handler(call: CallbackQuery):
+    bot, user_id = await get_bot_user_ids(call)
+    code = call.data[len('promo_manage_discount_'):]
+    TgConfig.STATE[user_id] = 'promo_manage_discount'
+    TgConfig.STATE[f'{user_id}_promo_manage_code'] = code
+    TgConfig.STATE[f'{user_id}_message_id'] = call.message.message_id
+    await bot.edit_message_text('Enter new discount percent:',
+                                chat_id=call.message.chat.id,
+                                message_id=call.message.message_id,
+                                reply_markup=back(f'manage_promo_code_{code}'))
+
+
+async def promo_manage_receive_discount(message: Message):
     bot, user_id = await get_bot_user_ids(message)
-    if TgConfig.STATE.get(user_id) != 'promo_delete':
+    if TgConfig.STATE.get(user_id) != 'promo_manage_discount':
         return
-    code = message.text.strip()
+    code = TgConfig.STATE.get(f'{user_id}_promo_manage_code')
+    new_discount = int(message.text.strip())
     message_id = TgConfig.STATE.get(f'{user_id}_message_id')
     await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-    if get_promocode(code):
-        delete_promocode(code)
-        text = '✅ Promo code deleted'
-        admin_info = await bot.get_chat(user_id)
-        logger.info(f"User {user_id} ({admin_info.first_name}) deleted promo code {code}")
-    else:
-        text = '❌ Promo code not found'
+    update_promocode(code, discount=new_discount)
     TgConfig.STATE[user_id] = None
-    await bot.edit_message_text(text,
+    admin_info = await bot.get_chat(user_id)
+    logger.info(f"User {user_id} ({admin_info.first_name}) updated promo code {code} discount to {new_discount}")
+    await bot.edit_message_text('✅ Discount updated',
                                 chat_id=message.chat.id,
                                 message_id=message_id,
-                                reply_markup=back('promo_management'))
+                                reply_markup=promo_manage_actions(code))
+
+
+async def promo_manage_expiry_handler(call: CallbackQuery):
+    bot, user_id = await get_bot_user_ids(call)
+    code = call.data[len('promo_manage_expiry_'):]
+    TgConfig.STATE[user_id] = 'promo_manage_expiry_type'
+    TgConfig.STATE[f'{user_id}_promo_manage_code'] = code
+    TgConfig.STATE[f'{user_id}_message_id'] = call.message.message_id
+    await bot.edit_message_text('Choose expiry type:',
+                                chat_id=call.message.chat.id,
+                                message_id=call.message.message_id,
+                                reply_markup=promo_expiry_keyboard(f'manage_promo_code_{code}'))
+
+
+async def promo_manage_expiry_type_handler(call: CallbackQuery):
+    bot, user_id = await get_bot_user_ids(call)
+    if TgConfig.STATE.get(user_id) != 'promo_manage_expiry_type':
+        return
+    unit = call.data[len('promo_expiry_'):]
+    code = TgConfig.STATE.get(f'{user_id}_promo_manage_code')
+    message_id = TgConfig.STATE.get(f'{user_id}_message_id')
+    if unit == 'none':
+        update_promocode(code, expires_at=None)
+        TgConfig.STATE[user_id] = None
+        admin_info = await bot.get_chat(user_id)
+        logger.info(f"User {user_id} ({admin_info.first_name}) updated promo code {code} expiry")
+        await bot.edit_message_text('✅ Expiry updated',
+                                    chat_id=call.message.chat.id,
+                                    message_id=message_id,
+                                    reply_markup=promo_manage_actions(code))
+        return
+    TgConfig.STATE[f'{user_id}_promo_expiry_unit'] = unit
+    TgConfig.STATE[user_id] = 'promo_manage_expiry_number'
+    await bot.edit_message_text(f'Enter number of {unit}:',
+                                chat_id=call.message.chat.id,
+                                message_id=message_id,
+                                reply_markup=back(f'manage_promo_code_{code}'))
+
+
+async def promo_manage_receive_expiry_number(message: Message):
+    bot, user_id = await get_bot_user_ids(message)
+    if TgConfig.STATE.get(user_id) != 'promo_manage_expiry_number':
+        return
+    number = int(message.text.strip())
+    unit = TgConfig.STATE.get(f'{user_id}_promo_expiry_unit')
+    code = TgConfig.STATE.get(f'{user_id}_promo_manage_code')
+    message_id = TgConfig.STATE.get(f'{user_id}_message_id')
+    await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+    if number <= 0:
+        expiry = None
+    else:
+        days = {'days': number, 'weeks': number * 7, 'months': number * 30}[unit]
+        expiry_date = datetime.date.today() + datetime.timedelta(days=days)
+        expiry = expiry_date.strftime('%Y-%m-%d')
+    update_promocode(code, expires_at=expiry)
+    TgConfig.STATE[user_id] = None
+    TgConfig.STATE.pop(f'{user_id}_promo_expiry_unit', None)
+    admin_info = await bot.get_chat(user_id)
+    logger.info(f"User {user_id} ({admin_info.first_name}) updated promo code {code} expiry")
+    await bot.edit_message_text('✅ Expiry updated',
+                                chat_id=message.chat.id,
+                                message_id=message_id,
+                                reply_markup=promo_manage_actions(code))
+
+
+async def promo_manage_delete_handler(call: CallbackQuery):
+    bot, user_id = await get_bot_user_ids(call)
+    code = call.data[len('promo_manage_delete_'):]
+    delete_promocode(code)
+    admin_info = await bot.get_chat(user_id)
+    logger.info(f"User {user_id} ({admin_info.first_name}) deleted promo code {code}")
+    codes = [p.code for p in get_all_promocodes()]
+    if codes:
+        await bot.edit_message_text('Select promo code:',
+                                    chat_id=call.message.chat.id,
+                                    message_id=call.message.message_id,
+                                    reply_markup=promo_codes_list(codes, 'manage_promo_code', 'promo_management'))
+    else:
+        await bot.edit_message_text('✅ Promo code deleted',
+                                    chat_id=call.message.chat.id,
+                                    message_id=call.message.message_id,
+                                    reply_markup=back('promo_management'))
 
 
 async def assign_photos_callback_handler(call: CallbackQuery):
@@ -1099,6 +1268,22 @@ def register_shop_management(dp: Dispatcher) -> None:
                                        lambda c: c.data == 'create_promo')
     dp.register_callback_query_handler(delete_promo_callback_handler,
                                        lambda c: c.data == 'delete_promo')
+    dp.register_callback_query_handler(manage_promo_callback_handler,
+                                       lambda c: c.data == 'manage_promo')
+    dp.register_callback_query_handler(promo_code_delete_callback_handler,
+                                       lambda c: c.data.startswith('delete_promo_code_'))
+    dp.register_callback_query_handler(promo_manage_select_handler,
+                                       lambda c: c.data.startswith('manage_promo_code_'))
+    dp.register_callback_query_handler(promo_manage_discount_handler,
+                                       lambda c: c.data.startswith('promo_manage_discount_'))
+    dp.register_callback_query_handler(promo_manage_expiry_handler,
+                                       lambda c: c.data.startswith('promo_manage_expiry_'))
+    dp.register_callback_query_handler(promo_manage_delete_handler,
+                                       lambda c: c.data.startswith('promo_manage_delete_'))
+    dp.register_callback_query_handler(promo_create_expiry_type_handler,
+                                       lambda c: c.data.startswith('promo_expiry_') and TgConfig.STATE.get(c.from_user.id) == 'promo_create_expiry_type')
+    dp.register_callback_query_handler(promo_manage_expiry_type_handler,
+                                       lambda c: c.data.startswith('promo_expiry_') and TgConfig.STATE.get(c.from_user.id) == 'promo_manage_expiry_type')
 
     dp.register_message_handler(check_item_name_for_amount_upd,
                                 lambda c: TgConfig.STATE.get(c.from_user.id) == 'update_amount_of_item')
@@ -1143,10 +1328,12 @@ def register_shop_management(dp: Dispatcher) -> None:
                                 lambda c: TgConfig.STATE.get(c.from_user.id) == 'promo_create_code')
     dp.register_message_handler(promo_code_receive_discount,
                                 lambda c: TgConfig.STATE.get(c.from_user.id) == 'promo_create_discount')
-    dp.register_message_handler(promo_code_receive_expiry,
-                                lambda c: TgConfig.STATE.get(c.from_user.id) == 'promo_create_expiry')
-    dp.register_message_handler(promo_code_delete_process,
-                                lambda c: TgConfig.STATE.get(c.from_user.id) == 'promo_delete')
+    dp.register_message_handler(promo_code_receive_expiry_number,
+                                lambda c: TgConfig.STATE.get(c.from_user.id) == 'promo_create_expiry_number')
+    dp.register_message_handler(promo_manage_receive_discount,
+                                lambda c: TgConfig.STATE.get(c.from_user.id) == 'promo_manage_discount')
+    dp.register_message_handler(promo_manage_receive_expiry_number,
+                                lambda c: TgConfig.STATE.get(c.from_user.id) == 'promo_manage_expiry_number')
 
     dp.register_callback_query_handler(update_item_process,
                                        lambda c: c.data.startswith('change_'))

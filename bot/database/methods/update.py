@@ -1,4 +1,4 @@
-from bot.database.models import User, ItemValues, Goods, Categories
+from bot.database.models import User, ItemValues, Goods, Categories, PromoCode
 from bot.database import Database
 
 
@@ -51,4 +51,17 @@ def update_category(category_name: str, new_name: str) -> None:
         values={Goods.category_name: new_name})
     Database().session.query(Categories).filter(Categories.name == category_name).update(
         values={Categories.name: new_name})
+    Database().session.commit()
+
+
+def update_promocode(code: str, discount: int | None = None, expires_at: str | None = None) -> None:
+    """Update promo code discount or expiry date."""
+    values = {}
+    if discount is not None:
+        values[PromoCode.discount] = discount
+    if expires_at is not None or expires_at is None:
+        values[PromoCode.expires_at] = expires_at
+    if not values:
+        return
+    Database().session.query(PromoCode).filter(PromoCode.code == code).update(values=values)
     Database().session.commit()
