@@ -142,7 +142,7 @@ def console() -> InlineKeyboardMarkup:
 def confirm_purchase_menu(item_name: str, lang: str) -> InlineKeyboardMarkup:
     inline_keyboard = [
         [InlineKeyboardButton(t(lang, 'purchase_button'), callback_data=f'buy_{item_name}')],
-        [InlineKeyboardButton(t(lang, 'apply_promo'), callback_data=f'promo_{item_name}')],
+        [InlineKeyboardButton(t(lang, 'apply_promo'), callback_data=f'applypromo_{item_name}')],
         [InlineKeyboardButton('🔙 Back to menu', callback_data='back_to_menu')]
     ]
     return InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
@@ -232,7 +232,40 @@ def promo_codes_management() -> InlineKeyboardMarkup:
     inline_keyboard = [
         [InlineKeyboardButton('➕ Create promo code', callback_data='create_promo')],
         [InlineKeyboardButton('🗑️ Delete promo code', callback_data='delete_promo')],
+        [InlineKeyboardButton('🛠 Manage promo code', callback_data='manage_promo')],
         [InlineKeyboardButton('🔙 Go back', callback_data='shop_management')],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
+
+
+def promo_expiry_keyboard(back_data: str) -> InlineKeyboardMarkup:
+    """Keyboard to choose promo code expiry units."""
+    inline_keyboard = [
+        [InlineKeyboardButton('Days', callback_data='promo_expiry_days')],
+        [InlineKeyboardButton('Weeks', callback_data='promo_expiry_weeks')],
+        [InlineKeyboardButton('Months', callback_data='promo_expiry_months')],
+        [InlineKeyboardButton('No expiry', callback_data='promo_expiry_none')],
+        [InlineKeyboardButton('🔙 Go back', callback_data=back_data)],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
+
+
+def promo_codes_list(codes: list[str], action: str, back_data: str) -> InlineKeyboardMarkup:
+    """Create a list of promo codes with callback prefix."""
+    markup = InlineKeyboardMarkup()
+    for code in codes:
+        markup.add(InlineKeyboardButton(code, callback_data=f'{action}_{code}'))
+    markup.add(InlineKeyboardButton('🔙 Go back', callback_data=back_data))
+    return markup
+
+
+def promo_manage_actions(code: str) -> InlineKeyboardMarkup:
+    """Keyboard with actions for a single promo code."""
+    inline_keyboard = [
+        [InlineKeyboardButton('✏️ Change discount', callback_data=f'promo_manage_discount_{code}')],
+        [InlineKeyboardButton('⏰ Change expiry', callback_data=f'promo_manage_expiry_{code}')],
+        [InlineKeyboardButton('🗑️ Delete', callback_data=f'promo_manage_delete_{code}')],
+        [InlineKeyboardButton('🔙 Go back', callback_data='manage_promo')],
     ]
     return InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
 
