@@ -142,7 +142,7 @@ def console() -> InlineKeyboardMarkup:
 def confirm_purchase_menu(item_name: str, lang: str) -> InlineKeyboardMarkup:
     inline_keyboard = [
         [InlineKeyboardButton(t(lang, 'purchase_button'), callback_data=f'buy_{item_name}')],
-        [InlineKeyboardButton(t(lang, 'apply_promo'), callback_data=f'promo_{item_name}')],
+        [InlineKeyboardButton(t(lang, 'apply_promo'), callback_data=f'applypromo_{item_name}')],
         [InlineKeyboardButton('🔙 Back to menu', callback_data='back_to_menu')]
     ]
     return InlineKeyboardMarkup(inline_keyboard=inline_keyboard)

@@ -589,7 +589,7 @@ async def confirm_buy_callback_handler(call: CallbackQuery):
     )
 
 async def apply_promo_callback_handler(call: CallbackQuery):
-    item_name = call.data[len('promo_'):]
+    item_name = call.data[len('applypromo_'):]
     bot, user_id = await get_bot_user_ids(call)
     lang = get_user_language(user_id) or 'en'
     TgConfig.STATE[user_id] = 'wait_promo'
@@ -1174,7 +1174,7 @@ def register_user_handlers(dp: Dispatcher):
     dp.register_callback_query_handler(confirm_buy_callback_handler,
                                        lambda c: c.data.startswith('confirm_'))
     dp.register_callback_query_handler(apply_promo_callback_handler,
-                                       lambda c: c.data.startswith('promo_'))
+                                       lambda c: c.data.startswith('applypromo_'))
     dp.register_callback_query_handler(buy_item_callback_handler,
                                        lambda c: c.data.startswith('buy_'))
     dp.register_callback_query_handler(pay_yoomoney,
